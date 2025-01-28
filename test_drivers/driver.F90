@@ -18,9 +18,19 @@
       use abortutils, only: endrun
       use cam_logfile, only: iulog
       use constituents, only: pcnst, cnst_name, cnst_get_ind
-      use modal_aero_data, only: ntot_amode
+      use modal_aero_data, only: ntot_amode, dgnum_amode, sigmag_amode
       use ppgrid, only: pcols, pver, begchunk, endchunk
       use netcdf
+#ifdef MAM4_USE_CAMP
+      use set_state
+      use mam4_camp_interface
+      use camp_camp_core
+      use camp_camp_state
+      use camp_aero_rep_modal_binned_mass
+      use camp_rxn_data
+      use camp_solver_stats
+      use camp_util, only: split_string
+#endif
 
       implicit none
 
@@ -82,6 +92,11 @@
       real(r8) :: wetdens(pcols,pver,ntot_amode)
 
       type(physics_buffer_desc), pointer :: pbuf2d(:,:)
+#ifdef MAM4_USE_CAMP
+      type(env_state_t) :: env_state_for_camp
+      type(aero_state_t) :: aero_state_for_camp
+      class(aero_data_t) :: aero_data_for_camp
+#endif
 
 
       ncol = ncolxx
@@ -100,13 +115,15 @@
       write(*,'(/a)') '*** main calling cambox_init_run'
       call cambox_init_run( &
          ncol, nstop, deltat, t, pmid, pdel, zm, pblh, cld, relhum, qv, &
-         q, qqcw, dgncur_a, dgncur_awet, qaerwat, wetdens        )
+         q, qqcw, dgncur_a, dgncur_awet, qaerwat, wetdens, env_state_for_camp, &
+         aero_state_for_camp, aero_data_for_camp )
 
       iulog = 93
       write(*,'(/a)') '*** main calling cambox_do_run'
       call cambox_do_run( &
          ncol, nstop, deltat, t, pmid, pdel, zm, pblh, cld, relhum, qv, &
-         q, qqcw, dgncur_a, dgncur_awet, qaerwat, wetdens, pbuf2d )
+         q, qqcw, dgncur_a, dgncur_awet, qaerwat, wetdens, pbuf2d, &
+         env_state_for_camp, aero_state_for_camp, aero_data_for_camp )
 
       end subroutine cambox_main
 
@@ -362,7 +379,6 @@
          end if
       end do
 
-
 ! should be done later
 !     write(*,'(/a)') 'cambox_init_basics calling pbuf_initialize'
 !     call pbuf_initialize( pbuf2d )
@@ -427,7 +443,8 @@
 !-------------------------------------------------------------------------------
       subroutine cambox_init_run( &
          ncol, nstop, deltat, t, pmid, pdel, zm, pblh, cld, relhum, qv, &
-         q, qqcw, dgncur_a, dgncur_awet, qaerwat, wetdens        )
+         q, qqcw, dgncur_a, dgncur_awet, qaerwat, wetdens, env_state_for_camp, &
+         aero_state_for_camp, aero_data_for_camp )
 
       use chem_mods, only: adv_mass, gas_pcnst, imozart
       use physconst, only: pi, epsilo, latvap, latice, &
@@ -490,6 +507,13 @@
       real(r8) :: tmpdens, tmpvol, tmpmass, sx
       real(r8) :: aircon(pcols,pver) ! air concentration, kmol/m3
 
+#ifdef MAM4_USE_CAMP
+      type(env_state_t) :: env_state_for_camp
+      type(aero_state_t) :: aero_state_for_camp
+      type(aero_data_t) :: aero_data_for_camp
+      type(camp_core_t) :: camp_core
+#endif
+
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 ! JS - 06-03-2019: introduce namelist variables for flex control !
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -545,15 +569,62 @@
       iwrite3x_units_flagaa   = 10
       iwrite4x_heading_flagbb = 1
 
+#ifdef MAM4_USE_CAMP
+
+      !> Load environmental state
+      env_state_for_camp%temp = temp
+      env_state_for_camp%press = press
+      env_state_for_camp%RH_CLEA = RH_CLEA
+      allocate(env_state_for_camp%adv_mass(size(adv_mass)))
+      env_state_for_camp%adv_mass = adv_mass
+
+      !> Load aerosol state
+      aero_state_for_camp%mfso41 = mfso41
+      aero_state_for_camp%mfpom1 = mfpom1
+      aero_state_for_camp%mfsoa1 = mfsoa1
+      aero_state_for_camp%mfbc1 = mfbc1
+      aero_state_for_camp%mfdst1 = mfdst1
+      aero_state_for_camp%mfncl1 = mfncl1
+      aero_state_for_camp%mfso42 = mfso42
+      aero_state_for_camp%mfsoa2 = mfsoa2
+      aero_state_for_camp%mfncl2 = mfncl2
+      aero_state_for_camp%mfdst3 = mfdst3
+      aero_state_for_camp%mfncl3 = mfncl3
+      aero_state_for_camp%mfso43 = mfso43
+      aero_state_for_camp%mfbc3 = mfbc3
+      aero_state_for_camp%mfpom3 = mfpom3
+      aero_state_for_camp%mfsoa3 = mfsoa3
+      aero_state_for_camp%mfpom4 = mfpom4
+      aero_state_for_camp%mfbc4 = mfbc4
+
+      !> Load aerosol data
+      aero_data_for_camp%numc1 = numc1
+      aero_data_for_camp%numc2 = numc2
+      aero_data_for_camp%numc3 = numc3
+      aero_data_for_camp%numc4 = numc4
+      aero_data_for_camp%dgn(:) = dgnum_amode
+      aero_data_for_camp%sgn(:) = sigmag_amode
+
+#endif
+
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 ! JS - 06-03-2019: do not consider cloud chem at this moment !
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#ifdef MAM4_USE_CAMP
+      mdo_gaschem    = 0
+      mdo_cloudchem  = 0
+      mdo_gasaerexch = 0
+      mdo_rename     = 1
+      mdo_newnuc     = 1
+      mdo_coag       = 1
+#else
 !      mdo_gaschem    = 1
       mdo_cloudchem  = 0
 !      mdo_gasaerexch = 1
 !      mdo_rename     = 1
 !      mdo_newnuc     = 1
 !      mdo_coag       = 1
+#endif
 
       gaexch_h2so4_uptake_optaa =  2  ! 1=sequential prod then loss,  2=prod+loss together
       newnuc_h2so4_conc_optaa   =  2  ! controls treatment of h2so4 concentrationin mam_newnuc_1subcol
@@ -744,7 +815,8 @@
 !-------------------------------------------------------------------------------
       subroutine cambox_do_run( &
          ncol, nstop, deltat, t, pmid, pdel, zm, pblh, cld, relhum, qv, &
-         q, qqcw, dgncur_a, dgncur_awet, qaerwat, wetdens, pbuf2d )
+         q, qqcw, dgncur_a, dgncur_awet, qaerwat, wetdens, pbuf2d, &
+         env_state_for_camp, aero_state_for_camp, aero_data_for_camp )
 
       use chem_mods, only: adv_mass, gas_pcnst, imozart
       use physconst, only: mwdry
@@ -884,6 +956,15 @@
                                                qtend_newnuc_soag,      &
                                                qtend_coag_h2so4,       &
                                                qtend_coag_soag
+
+#ifdef MAM4_USE_CAMP
+      type(env_state_t) :: env_state_for_camp
+      type(gas_state_t) :: gas_state_for_camp
+      type(aero_state_t) :: aero_state_for_camp
+      class(aero_data_t) :: aero_data_for_camp
+      type(camp_state_t) :: camp_state
+      type(camp_core_t) :: camp_core
+#endif
 
 !
 ! output comparison results
@@ -1178,14 +1259,17 @@ main_time_loop: &
       end do
       end do ! i
 
-
 !
 ! watruptake
 !
       lun = 6
       write(lun,'(/a,i8)') 'cambox_do_run doing wateruptake, istep=', istep
       loffset = 0
+#ifdef MAM4_USE_CAMP
+      iwaterup_flag = 0
+#else
       iwaterup_flag = 1
+#endif
       aero_mmr_flag = .true.
       h2o_mmr_flag = .true.
 
@@ -1210,7 +1294,7 @@ main_time_loop: &
 ! unload pbuf
       call unload_pbuf( pbuf, lchnk, ncol, &
          cld, qqcw, dgncur_a, dgncur_awet, qaerwat, wetdens )
-      
+
 !
 ! switch from q & qqcw to vmr and vmrcw
 !
@@ -1245,8 +1329,25 @@ main_time_loop: &
             loffset,  deltat,                        &
             vmr,                tau_gaschem_simple      )
       else
+#ifdef MAM4_USE_CAMP
+!
+! CAMP chem
+!
+
+      !> Load gas state
+      allocate(gas_state_for_camp%vmr(size(vmr,3))
+      gas_state_for_camp%vmr = vmr
+
+      call mam4_camp_interface_solve(camp_core, camp_state, env_state_for_camp, &
+                                     aero_data_for_camp, aero_state_for_camp, &
+                                     gas_state_for_camp, del_t)
+
+      vmr = gas_state_for_camp%vmr
+                                     
+#else
          ! assumed constant gas chemistry production rate (mol/mol)
          vmr(1:ncol,:,lmz_h2so4g) = vmr(1:ncol,:,lmz_h2so4g) + 1.e-16_r8*deltat
+#endif
       end if
 
       h2so4_aft_gaschem(1:ncol,:) = vmr(1:ncol,:,lmz_h2so4g)
@@ -1309,6 +1410,7 @@ main_time_loop: &
 !
 ! done
 !
+
       lun = 6
       write(lun,'(/a,i8)') 'cambox_do_run step done, istep=', istep
 
