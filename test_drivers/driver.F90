@@ -55,7 +55,7 @@
 
       contains
 
-      include camp_common.h
+      include 'camp_common.h'
 
 !-------------------------------------------------------------------------------
       subroutine cambox_main
