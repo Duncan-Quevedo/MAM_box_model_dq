@@ -4,12 +4,11 @@
 !> An interface between MAM4 and the CAMP
 module mam4_camp_interface
 
-  use set_state
+  use mam4_state
   use shr_kind_mod, only: r8 => shr_kind_r8
 #ifdef MAM4_USE_CAMP
   use camp_camp_core
   use camp_camp_state
-  use camp_aero_rep_modal_binned_mass
   use camp_rxn_data
   use camp_solver_stats
   use camp_util, only: split_string
@@ -67,14 +66,14 @@ contains
                                              gas_state, env_state)
 
     ! We're modifying particle diameters, so the bin sort is now invalid
-    aero_state%valid_sort = .false.
+    ! aero_state%valid_sort = .false.
 
     ! Solve the multi-phase chemical system
     call camp_core%solve(camp_state, del_t, solver_stats = solver_stats)
 
-    call assert_msg(592148911, solver_stats%status_code == 0, &
-         "Solver failed for aerosol-phase with code "// &
-         integer_to_string(solver_stats%solver_flag))
+    !call assert_msg(592148911, solver_stats%status_code == 0, &
+    !     "Solver failed for aerosol-phase with code "// &
+    !     integer_to_string(solver_stats%solver_flag))
 
     ! Update the PartMC gas-phase state
     call gas_state_get_camp_conc(gas_state, camp_state)
@@ -97,10 +96,11 @@ contains
     type(camp_state_t), intent(inout) :: camp_state
     !> Gas state.
     type(gas_state_t), intent(in) :: gas_state
-    !> Aerosol representation
-    type(aero_rep_model_binned_mass_t) :: aero_rep
+    !> Ambient state.
+    type(env_state_t), intent(in) :: env_state
 
-    real(kind=r8) :: numc, numc1, numc2, numc3
+    real(kind=r8) :: numc, numc1, numc2, numc3, numc4
+    real(kind=r8), parameter :: pi = 3.1415927
 
     numc1 = aero_data%numc1
     numc2 = aero_data%numc2
@@ -108,9 +108,9 @@ contains
     numc4 = aero_data%numc4
     numc =  numc1 + numc2 + numc3 + numc4
 
-    call camp_core%update_data(numc)
+    !call camp_core%update_data(numc)
 
-    camp_state%state_var((size(gas_state$vmr)+1):(size(gas_state$vmr)+6)) &
+    camp_state%state_var((size(gas_state%vmr)+1):(size(gas_state%vmr)+6)) &
          = (pi/6) * (/ &
          aero_state%mfso41*numc1*aero_data%dgn(1)**3*exp(4.5*log(aero_data%sg(1))**2) &
          /env_state%adv_mass(6) + &

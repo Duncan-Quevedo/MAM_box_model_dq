@@ -22,7 +22,7 @@
       use ppgrid, only: pcols, pver, begchunk, endchunk
       use netcdf
 #ifdef MAM4_USE_CAMP
-      use set_state
+      use mam4_state
       use mam4_camp_interface
       use camp_camp_core
       use camp_camp_state
@@ -95,7 +95,7 @@
 #ifdef MAM4_USE_CAMP
       type(env_state_t) :: env_state_for_camp
       type(aero_state_t) :: aero_state_for_camp
-      class(aero_data_t) :: aero_data_for_camp
+      type(aero_data_t) :: aero_data_for_camp
 #endif
 
 
@@ -603,7 +603,7 @@
       aero_data_for_camp%numc3 = numc3
       aero_data_for_camp%numc4 = numc4
       aero_data_for_camp%dgn(:) = dgnum_amode
-      aero_data_for_camp%sgn(:) = sigmag_amode
+      aero_data_for_camp%sg(:) = sigmag_amode
 
 #endif
 
@@ -961,7 +961,7 @@
       type(env_state_t) :: env_state_for_camp
       type(gas_state_t) :: gas_state_for_camp
       type(aero_state_t) :: aero_state_for_camp
-      class(aero_data_t) :: aero_data_for_camp
+      type(aero_data_t) :: aero_data_for_camp
       type(camp_state_t) :: camp_state
       type(camp_core_t) :: camp_core
 #endif
@@ -1335,14 +1335,14 @@ main_time_loop: &
 !
 
       !> Load gas state
-      allocate(gas_state_for_camp%vmr(size(vmr,3))
-      gas_state_for_camp%vmr = vmr
+      allocate(gas_state_for_camp%vmr(5))
+      gas_state_for_camp%vmr = vmr(1,1,1:5)
 
       call mam4_camp_interface_solve(camp_core, camp_state, env_state_for_camp, &
                                      aero_data_for_camp, aero_state_for_camp, &
-                                     gas_state_for_camp, del_t)
+                                     gas_state_for_camp, deltat)
 
-      vmr = gas_state_for_camp%vmr
+      vmr(1,1,1:5) = gas_state_for_camp%vmr
                                      
 #else
          ! assumed constant gas chemistry production rate (mol/mol)

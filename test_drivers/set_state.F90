@@ -4,8 +4,14 @@
 !> The state_t structures and associated subroutines.
 module mam4_state
 
+      use camp_camp_core
       use camp_camp_state
+      use camp_rxn_data
+      use camp_solver_stats
+      use camp_util, only: split_string
       use shr_kind_mod, only: r8 => shr_kind_r8
+
+      implicit none
 
       type env_state_t
         !> Temperature (K).
@@ -55,7 +61,7 @@ module mam4_state
         real(kind=r8) :: numc3
         real(kind=r8) :: numc4
         real(kind=r8) :: dgn(4)
-        real(kind=r8) :: sn(4)
+        real(kind=r8) :: sg(4)
       end type aero_data_t
 
       contains
@@ -74,8 +80,7 @@ module mam4_state
 
               subroutine gas_state_set_camp_conc(gas_state, &
                                                  env_state, &
-                                                 camp_state, &
-                                                 !gas_data)
+                                                 camp_state)
                 
                 type(gas_state_t), intent(in) :: gas_state
                 type(env_state_t), intent(in) :: env_state
@@ -109,7 +114,7 @@ module mam4_state
               subroutine gas_state_get_camp_conc(gas_state, &
                                                  camp_state)
                 
-                type(gas_state_t), intent(in) :: gas_state
+                type(gas_state_t), intent(inout) :: gas_state
                 type(camp_state_t), intent(inout) :: camp_state
 
                 gas_state%vmr = 1.0d3 * & ! (ppb)
