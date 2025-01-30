@@ -18,7 +18,7 @@ module mam4_camp_interface
 
 contains
 
-include 'camp_common.h'
+!> include 'camp_common.h'
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 #ifdef MAM4_USE_CAMP
