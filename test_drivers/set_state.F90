@@ -2,13 +2,13 @@
 !> The mam4_state module.
 
 !> The state_t structures and associated subroutines.
-module mam4_state
 
+module mam4_state
+#ifdef MAM4_USE_CAMP
       use camp_camp_core
       use camp_camp_state
-      use camp_rxn_data
-      use camp_solver_stats
-      use camp_util, only: split_string
+      use camp_constants
+      use camp_chem_spec_data
       use shr_kind_mod, only: r8 => shr_kind_r8
 
       implicit none
@@ -20,49 +20,23 @@ module mam4_state
         real(kind=r8) :: press
         !> Relative humidity (0-1).
         real(kind=r8) :: RH_CLEA
-        !> Mass of air parcel
-        real(kind=r8), allocatable :: adv_mass(:)
       end type env_state_t
       type aero_state_t
-        !> Mass fractions (0-1) in Mode 1.
-        real(kind=r8) :: mfso41
-        real(kind=r8) :: mfpom1
-        real(kind=r8) :: mfsoa1
-        real(kind=r8) :: mfbc1
-        real(kind=r8) :: mfdst1
-        real(kind=r8) :: mfncl1
-        !> Mass fractions (0-1) in Mode 2.
-        real(kind=r8) :: mfso42
-        real(kind=r8) :: mfsoa2
-        real(kind=r8) :: mfncl2
-        !> Mass fractions (0-1) in Mode 3.
-        real(kind=r8) :: mfdst3
-        real(kind=r8) :: mfncl3
-        real(kind=r8) :: mfso43
-        real(kind=r8) :: mfbc3
-        real(kind=r8) :: mfpom3
-        real(kind=r8) :: mfsoa3
-        !> Mass fractions (0-1) in Mode 4.
-        real(kind=r8) :: mfpom4
-        real(kind=r8) :: mfbc4
+        !> Mass fractions (0-1).
+        real(kind=r8) :: qso4(4)
+        real(kind=r8) :: qpom(4)
+        real(kind=r8) :: qsoa(4)
+        real(kind=r8) :: qbc(4)
+        real(kind=r8) :: qdst(4)
+        real(kind=r8) :: qncl(4)
+        real(kind=r8) :: GMD(4), GSD(4)
       end type aero_state_t
       type gas_state_t
         !> Gas mixing ratios.
         real(kind=r8), allocatable :: vmr(:)
       end type gas_state_t
-!     type gas_data_t
-!       character(len=100), allocatable :: name(:)
-!       integer, allocatable :: index
-!       integer :: i_camp_water = 0
-!     end type gas_data_t
-      type aero_data_t
-        real(kind=r8) :: numc1
-        real(kind=r8) :: numc2
-        real(kind=r8) :: numc3
-        real(kind=r8) :: numc4
-        real(kind=r8) :: dgn(4)
-        real(kind=r8) :: sg(4)
-      end type aero_data_t
+      integer :: idx_so2g, idx_h2so4g
+      real(kind=r8) :: to_kgperm3
 
       contains
 
@@ -74,25 +48,43 @@ module mam4_state
 
                 camp_state%env_states(1)%val%rel_humid = &
                         env_state%RH_CLEA
-                camp_state%env_states(1)%val%temp = env_state%temp
+                call camp_state%env_states(1)%set_temperature_K(env_state%temp)
+                call camp_state%env_states(1)%set_pressure_Pa(env_state%press)
 
               end subroutine env_state_set_camp_env_state
 
-              subroutine gas_state_set_camp_conc(gas_state, &
+              subroutine gas_state_set_camp_conc(camp_core, &
+                                                 gas_state, &
                                                  env_state, &
                                                  camp_state)
                 
                 type(gas_state_t), intent(in) :: gas_state
                 type(env_state_t), intent(in) :: env_state
                 type(camp_state_t), intent(inout) :: camp_state
-                !class(gas_data_t), intent(in) :: gas_data
+                type(camp_core_t), pointer :: camp_core
                 integer, parameter :: i_camp_water = 0
+
+                integer(kind=i_kind) :: idx_SO2, &
+                                        idx_H2SO4
+
+                type(chem_spec_data_t), pointer :: chem_spec_data
+            
+                if( .not.camp_core%get_chem_spec_data( chem_spec_data ) ) then
+                    write(*,*) "Something's gone wrong!"
+                    stop 3
+                end if
+
+                idx_SO2 = chem_spec_data%gas_state_id("SO2")
+                idx_H2SO4 = chem_spec_data%gas_state_id("H2SO4")
 
                 camp_state%state_var(i_camp_water) = &
                         env_state_rh_to_y(env_state)
 
-                camp_state%state_var(1:size(gas_state%vmr)) = &
-                        1.0d-3 * gas_state%vmr ! (ppm)
+                camp_state%state_var(idx_SO2) =  gas_state%vmr(idx_so2g)
+                camp_state%state_var(idx_H2SO4) = gas_state%vmr(idx_h2so4g)
+
+                print *, 'MAM4 H2SO4', gas_state%vmr(idx_h2so4g)
+                print *, 'CAMP H2SO4', camp_state%state_var(idx_H2SO4)
               
               end subroutine gas_state_set_camp_conc
 
@@ -112,14 +104,32 @@ module mam4_state
               end function env_state_rh_to_y
 
               subroutine gas_state_get_camp_conc(gas_state, &
-                                                 camp_state)
+                                                 camp_state, camp_core)
                 
                 type(gas_state_t), intent(inout) :: gas_state
                 type(camp_state_t), intent(inout) :: camp_state
+                type(camp_core_t), pointer :: camp_core
 
-                gas_state%vmr = 1.0d3 * & ! (ppb)
-                            camp_state%state_var(1:size(gas_state%vmr))
+                integer(kind=i_kind) :: idx_SO2, &
+                                        idx_H2SO4
+
+                type(chem_spec_data_t), pointer :: chem_spec_data
+            
+                if( .not.camp_core%get_chem_spec_data( chem_spec_data ) ) then
+                    write(*,*) "Something's gone wrong!"
+                    stop 3
+                end if
+
+                idx_SO2 = chem_spec_data%gas_state_id("SO2")
+                idx_H2SO4 = chem_spec_data%gas_state_id("H2SO4")
+
+                gas_state%vmr(idx_so2g) = camp_state%state_var(idx_SO2)
+                gas_state%vmr(idx_h2so4g) = camp_state%state_var(idx_H2SO4)
+
+                print *, 'MAM4 H2SO4', gas_state%vmr(idx_h2so4g)
+                print *, 'CAMP H2SO4', camp_state%state_var(idx_H2SO4)
               
               end subroutine gas_state_get_camp_conc
-
+#endif
 end module mam4_state
+

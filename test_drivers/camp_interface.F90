@@ -4,150 +4,300 @@
 !> An interface between MAM4 and the CAMP
 module mam4_camp_interface
 
-  use mam4_state
   use shr_kind_mod, only: r8 => shr_kind_r8
 #ifdef MAM4_USE_CAMP
+  use mam4_state
   use camp_camp_core
   use camp_camp_state
-  use camp_rxn_data
+  use camp_chem_spec_data
+  use camp_aero_rep_data
+  use camp_aero_rep_modal_binned_mass
+  use camp_constants
+  use camp_util
+  use json_module
   use camp_solver_stats
-  use camp_util, only: split_string
 #endif
 
   implicit none
 
 contains
 
-!> include 'camp_common.h'
-
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 #ifdef MAM4_USE_CAMP
   !> Run the CAMP module for the current MAM4 state
-  subroutine mam4_camp_interface_solve(camp_core, camp_state, &
-          env_state, aero_data, aero_state, gas_state, del_t)
+  subroutine mam4_camp_interface_solve( &
+          env_state, aero_state, gas_state, del_t)
 
     !> CAMP core
-    type(camp_core_t), intent(in) :: camp_core
+    type(camp_core_t), pointer :: camp_core
     !> CAMP state
-    type(camp_state_t), intent(inout) :: camp_state
-    !> Working CAMP state
-    !type(camp_state_t), intent(inout) :: camp_pre_aero_state
-    !> Working CAMP state
-    !type(camp_state_t), intent(inout) :: camp_post_aero_state
+    type(camp_state_t), pointer :: camp_state
     !> Environment.
     type(env_state_t), intent(inout) :: env_state
-    !> Aerosol data
-    type(aero_data_t), intent(in) :: aero_data
     !> Aerosol state
     type(aero_state_t), intent(inout) :: aero_state
-    !> Gas data
-    !type(gas_data_t), intent(in) :: gas_data
     !> Gas state
     type(gas_state_t), intent(inout) :: gas_state
-    !> Photolysis calculator
-!   type(photolysis_t), intent(inout) :: photolysis
     !> Time step (s)
     real(kind=r8), intent(in) :: del_t
+    integer :: n
+    character(len=4), parameter :: aero_rep_key = "MAM4"
+    character(len=16), parameter :: mode_names(4) = (/ "accumulation    ", &
+                                                       "aitken          ", &
+                                                       "coarse          ", &
+                                                       "primary carbon  " /)
+    integer(kind=i_kind) :: mode(4)
+    class(aero_rep_data_t), pointer :: aero_rep_ptr
+    type(aero_rep_update_data_modal_binned_mass_GMD_t) :: update_data_GMD
+    type(aero_rep_update_data_modal_binned_mass_GSD_t) :: update_data_GSD
 
-    real(kind=r8) :: num_conc
-    integer :: camp_state_size
     type(solver_stats_t), target :: solver_stats
+
+    camp_core => camp_core_t("/home/dquevedo/AMBRS/ambrs_with_mam4-camp_support/tests/config.json")
+    call camp_core%initialize()
+
+    !call camp_core%solver_initialize()
+    !camp_state => camp_core%new_state()
+
+    call assert(209301925, camp_core%get_aero_rep(aero_rep_key, aero_rep_ptr))
+    select type (aero_rep_ptr)
+          type is (aero_rep_modal_binned_mass_t)
+            call camp_core%initialize_update_object(aero_rep_ptr, &
+                                                     update_data_GMD)
+            call camp_core%initialize_update_object(aero_rep_ptr, &
+                                                     update_data_GSD)
+            call camp_core%solver_initialize()
+            camp_state => camp_core%new_state()
+            do n = 1, 4
+                call assert_msg(431201141, &
+                      aero_rep_ptr%get_section_id(mode_names(n), mode(n)), &
+                      "Could not get mode ID")
+                !print *, mode_names(n), 'GMD =', aero_state%GMD(n), 'GSD =', aero_state%GSD(n)
+                call update_data_GMD%set_GMD(mode(n), aero_state%GMD(n))
+                call update_data_GSD%set_GSD(mode(n), aero_state%GSD(n))
+                call camp_core%update_data(update_data_GMD)
+                call camp_core%update_data(update_data_GSD)
+            end do
+        class default
+            write(*,*) "wrong aerosol rep"
+            stop 3
+    end select
+
+    !call camp_core%solver_initialize()
+    !camp_state => camp_core%new_state()
 
     ! Set the CAMP environmental state.
     call env_state_set_camp_env_state(env_state, camp_state)
 
     ! Set the CAMP gas-phase species concentrations
-    call gas_state_set_camp_conc(gas_state, env_state, camp_state)
+    call gas_state_set_camp_conc(camp_core, gas_state, env_state, camp_state)
 
-    ! Recalculate the photolysis rate constants
-    ! call photolysis%update_rate_constants()
-
-    ! Update the number concentrations and composition for all particles
-    call mam4_camp_interface_set_camp_aerosol(aero_data, aero_state, &
-                                             camp_core, camp_state, &
-                                             gas_state, env_state)
-
-    ! We're modifying particle diameters, so the bin sort is now invalid
-    ! aero_state%valid_sort = .false.
+    
+    ! Update the mass concentrations and composition for all particles
+    call mam4_camp_interface_set_camp_aerosol(aero_state, &
+                                              camp_core, camp_state)
 
     ! Solve the multi-phase chemical system
     call camp_core%solve(camp_state, del_t, solver_stats = solver_stats)
+    !call solver_stats%print()
 
-    !call assert_msg(592148911, solver_stats%status_code == 0, &
-    !     "Solver failed for aerosol-phase with code "// &
-    !     integer_to_string(solver_stats%solver_flag))
+    call mam4_camp_interface_get_camp_aerosol(aero_state, &
+                                          camp_core, camp_state)
 
-    ! Update the PartMC gas-phase state
-    call gas_state_get_camp_conc(gas_state, camp_state)
+    ! Update the MAM4 gas-phase state
+    call gas_state_get_camp_conc(gas_state, camp_state, camp_core)
+
+    deallocate( camp_core, camp_state )
 
   end subroutine mam4_camp_interface_solve
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-  !> Set the CAMP aerosol-phase species and number concentrations
-  subroutine mam4_camp_interface_set_camp_aerosol(aero_data, aero_state, &
-      camp_core, camp_state, gas_state, env_state)
+  !> Set the CAMP aerosol-phase species and mass concentrations
+  subroutine mam4_camp_interface_set_camp_aerosol(aero_state, &
+      camp_core, camp_state)
 
-    !> Aerosol data.
-    class(aero_data_t), intent(in) :: aero_data
     !> Aerosol state.
-    type(aero_state_t), intent(inout) :: aero_state
+    type(aero_state_t), intent(in) :: aero_state
     !> CAMP core.
-    type(camp_core_t), intent(in) :: camp_core
+    type(camp_core_t), pointer, intent(inout) :: camp_core
     !> CAMP state.
-    type(camp_state_t), intent(inout) :: camp_state
-    !> Gas state.
-    type(gas_state_t), intent(in) :: gas_state
-    !> Ambient state.
-    type(env_state_t), intent(in) :: env_state
+    type(camp_state_t), pointer, intent(out) :: camp_state
 
-    real(kind=r8) :: numc, numc1, numc2, numc3, numc4
-    real(kind=r8), parameter :: pi = 3.1415927
+    integer(kind=i_kind) :: idx_H2O_1, &
+                            idx_H2O_2, &
+                            idx_H2O_3, &
+                            idx_SO4_1, &
+                            idx_SO4_2, &
+                            idx_SO4_3, &
+                            idx_POM_1, &
+                            idx_POM_2, &
+                            idx_POM_3, &
+                            idx_POM_4, &
+                            idx_SOA_1, &
+                            idx_SOA_2, &
+                            idx_SOA_3, &
+                            idx_SOA_4, &
+                            idx_BC_1, &
+                            idx_BC_3, &
+                            idx_BC_4, &
+                            idx_DST_1, &
+                            idx_DST_3, &
+                            idx_NCL_1, &
+                            idx_NCL_2, &
+                            idx_NCL_3
+    type(chem_spec_data_t), pointer :: chem_spec_data
+    class(aero_rep_data_t), pointer :: aero_rep_data
+    
+    if( .not.camp_core%get_aero_rep( "MAM4", aero_rep_data ) ) then
+        write(*,*) "Something's gone wrong!"
+        stop 3
+    end if
+    idx_SO4_1 = aero_rep_data%spec_state_id("accumulation.aqueous sulfate.SO4")
+    idx_SO4_2 = aero_rep_data%spec_state_id("aitken.aqueous sulfate.SO4")
+    idx_SO4_3 = aero_rep_data%spec_state_id("coarse.aqueous sulfate.SO4")
+    idx_POM_1 = aero_rep_data%spec_state_id("accumulation.organic matter.POM")
+    idx_POM_2 = aero_rep_data%spec_state_id("aitken.organic matter.POM")
+    idx_POM_3 = aero_rep_data%spec_state_id("coarse.organic matter.POM")
+    idx_POM_4 = aero_rep_data%spec_state_id("primary carbon.organic matter.POM")
+    idx_SOA_1 = aero_rep_data%spec_state_id("accumulation.organic matter.SOA")
+    idx_SOA_2 = aero_rep_data%spec_state_id("aitken.organic matter.SOA")
+    idx_SOA_3 = aero_rep_data%spec_state_id("coarse.organic matter.SOA")
+    idx_SOA_4 = aero_rep_data%spec_state_id("primary carbon.organic matter.SOA")
+    idx_BC_1 = aero_rep_data%spec_state_id("accumulation.soot.BC")
+    idx_BC_3 = aero_rep_data%spec_state_id("coarse.soot.BC")
+    idx_BC_4 = aero_rep_data%spec_state_id("primary carbon.soot.BC")
+    idx_DST_1 = aero_rep_data%spec_state_id("accumulation.dust.DST")
+    idx_DST_3 = aero_rep_data%spec_state_id("coarse.dust.DST")
+    idx_NCL_1 = aero_rep_data%spec_state_id("accumulation.other PM.NCL")
+    idx_NCL_2 = aero_rep_data%spec_state_id("aitken.other PM.NCL")
+    idx_NCL_3 = aero_rep_data%spec_state_id("coarse.other PM.NCL")
+    
+    !idx_H2O_1 = aero_rep_data%spec_state_id("accumulation.aqueous sulfate.H2O_aq")
+    !idx_H2O_2 = aero_rep_data%spec_state_id("aitken.aqueous sulfate.H2O_aq")
+    !idx_H2O_3 = aero_rep_data%spec_state_id("coarse.aqueous sulfate.H2O_aq")
 
-    numc1 = aero_data%numc1
-    numc2 = aero_data%numc2
-    numc3 = aero_data%numc3
-    numc4 = aero_data%numc4
-    numc =  numc1 + numc2 + numc3 + numc4
+    camp_state%state_var(idx_SO4_1) = aero_state%qso4(1)
+    camp_state%state_var(idx_SO4_2) = aero_state%qso4(2)
+    camp_state%state_var(idx_SO4_3) = aero_state%qso4(3)
+    camp_state%state_var(idx_POM_1) = aero_state%qpom(1)
+    camp_state%state_var(idx_POM_2) = aero_state%qpom(2)
+    camp_state%state_var(idx_POM_3) = aero_state%qpom(3)
+    camp_state%state_var(idx_POM_4) = aero_state%qpom(4)
+    camp_state%state_var(idx_SOA_1) = aero_state%qsoa(1)
+    camp_state%state_var(idx_SOA_2) = aero_state%qsoa(2)
+    camp_state%state_var(idx_SOA_3) = aero_state%qsoa(3)
+    camp_state%state_var(idx_SOA_4) = aero_state%qsoa(4)
+    camp_state%state_var(idx_BC_1) = aero_state%qbc(1)
+    camp_state%state_var(idx_BC_3) = aero_state%qbc(3)
+    camp_state%state_var(idx_BC_4) = aero_state%qbc(4)
+    camp_state%state_var(idx_DST_1) = aero_state%qdst(1)
+    camp_state%state_var(idx_DST_3) = aero_state%qdst(3)
+    camp_state%state_var(idx_NCL_1) = aero_state%qncl(1)
+    camp_state%state_var(idx_NCL_2) = aero_state%qncl(2)
+    camp_state%state_var(idx_NCL_3) = aero_state%qncl(3)
 
-    !call camp_core%update_data(numc)
+    !camp_state%state_var(idx_H2O_1) = 1.0e-3_r8
+    !camp_state%state_var(idx_H2O_2) = 1.0e-3_r8
+    !camp_state%state_var(idx_H2O_3) = 1.0e0-3_r8
 
-    camp_state%state_var((size(gas_state%vmr)+1):(size(gas_state%vmr)+6)) &
-         = (pi/6) * (/ &
-         aero_state%mfso41*numc1*aero_data%dgn(1)**3*exp(4.5*log(aero_data%sg(1))**2) &
-         /env_state%adv_mass(6) + &
-         aero_state%mfso42*numc2*aero_data%dgn(2)**3*exp(4.5*log(aero_data%sg(2))**2) &
-         /env_state%adv_mass(14) + &
-         aero_state%mfso43*numc3*aero_data%dgn(3)**3*exp(4.5*log(aero_data%sg(3))**2) &
-         /env_state%adv_mass(21), &
-         aero_state%mfpom1*numc1*aero_data%dgn(1)**3*exp(4.5*log(aero_data%sg(1))**2) &
-         /env_state%adv_mass(7) + &
-         aero_state%mfpom3*numc3*aero_data%dgn(3)**3*exp(4.5*log(aero_data%sg(3))**2) &
-         /env_state%adv_mass(23) + & 
-         aero_state%mfpom4*numc4*aero_data%dgn(4)**3*exp(4.5*log(aero_data%sg(4))**2) &
-         /env_state%adv_mass(27), &
-         aero_state%mfsoa1*numc1*aero_data%dgn(1)**3*exp(4.5*log(aero_data%sg(1))**2) &
-         /env_state%adv_mass(8) + &
-         aero_state%mfsoa2*numc2*aero_data%dgn(2)**3*exp(4.5*log(aero_data%sg(2))**2) &
-         /env_state%adv_mass(15) + &
-         aero_state%mfsoa3*numc3*aero_data%dgn(3)**3*exp(4.5*log(aero_data%sg(3))**2) &
-         /env_state%adv_mass(24), &
-         aero_state%mfbc1*numc1*aero_data%dgn(1)**3*exp(4.5*log(aero_data%sg(1))**2) &
-         /env_state%adv_mass(9) + & 
-         aero_state%mfbc4*numc4*aero_data%dgn(4)**3*exp(4.5*log(aero_data%sg(4))**2) &
-         /env_state%adv_mass(28), &
-         aero_state%mfdst1*numc1*aero_data%dgn(1)**3*exp(4.5*log(aero_data%sg(1))**2) &
-         /env_state%adv_mass(10) + & 
-         aero_state%mfdst3*numc3*aero_data%dgn(3)**3*exp(4.5*log(aero_data%sg(3))**2) &
-         /env_state%adv_mass(19), &
-         aero_state%mfncl1*numc1*aero_data%dgn(1)**3*exp(4.5*log(aero_data%sg(1))**2) &
-         /env_state%adv_mass(11) + &
-         aero_state%mfncl2*numc2*aero_data%dgn(2)**3*exp(4.5*log(aero_data%sg(2))**2) &
-         /env_state%adv_mass(16) + &
-         aero_state%mfncl3*numc3*aero_data%dgn(3)**3*exp(4.5*log(aero_data%sg(3))**2) &
-         /env_state%adv_mass(20) /)
+    print *, 'Pre-solve SO4', camp_state%state_var(idx_SO4_1) + &
+                              camp_state%state_var(idx_SO4_2) + &
+                              camp_state%state_var(idx_SO4_3)
 
   end subroutine mam4_camp_interface_set_camp_aerosol
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+  !> Get the CAMP aerosol-phase species and mass concentrations
+  subroutine mam4_camp_interface_get_camp_aerosol(aero_state, &
+      camp_core, camp_state)
+      
+    !> Aerosol state.
+    type(aero_state_t), intent(out) :: aero_state
+    !> CAMP core.
+    type(camp_core_t), pointer, intent(inout) :: camp_core
+    !> CAMP state.
+    type(camp_state_t), pointer, intent(in) :: camp_state
+
+    integer(kind=i_kind) :: idx_H2O_1, &
+                            idx_H2O_2, &
+                            idx_H2O_3, &
+                            idx_SO4_1, &
+                            idx_SO4_2, &
+                            idx_SO4_3, &
+                            idx_POM_1, &
+                            idx_POM_2, &
+                            idx_POM_3, &
+                            idx_POM_4, &
+                            idx_SOA_1, &
+                            idx_SOA_2, &
+                            idx_SOA_3, &
+                            idx_SOA_4, &
+                            idx_BC_1, &
+                            idx_BC_3, &
+                            idx_BC_4, &
+                            idx_DST_1, &
+                            idx_DST_3, &
+                            idx_NCL_1, &
+                            idx_NCL_2, &
+                            idx_NCL_3
+    type(chem_spec_data_t), pointer :: chem_spec_data
+    class(aero_rep_data_t), pointer :: aero_rep_data
+
+    if( .not.camp_core%get_aero_rep( "MAM4", aero_rep_data ) ) then
+        write(*,*) "Something's gone wrong!"
+        stop 3
+    end if
+    
+    idx_SO4_1 = aero_rep_data%spec_state_id("accumulation.aqueous sulfate.SO4")
+    idx_SO4_2 = aero_rep_data%spec_state_id("aitken.aqueous sulfate.SO4")
+    idx_SO4_3 = aero_rep_data%spec_state_id("coarse.aqueous sulfate.SO4")
+    idx_POM_1 = aero_rep_data%spec_state_id("accumulation.organic matter.POM")
+    idx_POM_2 = aero_rep_data%spec_state_id("aitken.organic matter.POM")
+    idx_POM_3 = aero_rep_data%spec_state_id("coarse.organic matter.POM")
+    idx_POM_4 = aero_rep_data%spec_state_id("primary carbon.organic matter.POM")
+    idx_SOA_1 = aero_rep_data%spec_state_id("accumulation.organic matter.SOA")
+    idx_SOA_2 = aero_rep_data%spec_state_id("aitken.organic matter.SOA")
+    idx_SOA_3 = aero_rep_data%spec_state_id("coarse.organic matter.SOA")
+    idx_SOA_4 = aero_rep_data%spec_state_id("primary carbon.organic matter.SOA")
+    idx_BC_1 = aero_rep_data%spec_state_id("accumulation.soot.BC")
+    idx_BC_3 = aero_rep_data%spec_state_id("coarse.soot.BC")
+    idx_BC_4 = aero_rep_data%spec_state_id("primary carbon.soot.BC")
+    idx_DST_1 = aero_rep_data%spec_state_id("accumulation.dust.DST")
+    idx_DST_3 = aero_rep_data%spec_state_id("coarse.dust.DST")
+    idx_NCL_1 = aero_rep_data%spec_state_id("accumulation.other PM.NCL")
+    idx_NCL_2 = aero_rep_data%spec_state_id("aitken.other PM.NCL")
+    idx_NCL_3 = aero_rep_data%spec_state_id("coarse.other PM.NCL")
+
+    aero_state%qso4(1) = camp_state%state_var(idx_SO4_1)
+    aero_state%qso4(2) = camp_state%state_var(idx_SO4_2)
+    aero_state%qso4(3) = camp_state%state_var(idx_SO4_3)
+    aero_state%qpom(1) = camp_state%state_var(idx_POM_1)
+    aero_state%qpom(2) = camp_state%state_var(idx_POM_2)
+    aero_state%qpom(3) = camp_state%state_var(idx_POM_3)
+    aero_state%qpom(4) = camp_state%state_var(idx_POM_4)
+    aero_state%qsoa(1) = camp_state%state_var(idx_SOA_1)
+    aero_state%qsoa(2) = camp_state%state_var(idx_SOA_2)
+    aero_state%qsoa(3) = camp_state%state_var(idx_SOA_3)
+    aero_state%qsoa(4) = camp_state%state_var(idx_SOA_4)
+    aero_state%qbc(1) = camp_state%state_var(idx_BC_1)
+    aero_state%qbc(3) = camp_state%state_var(idx_BC_3)
+    aero_state%qbc(4) = camp_state%state_var(idx_BC_4)
+    aero_state%qdst(1) = camp_state%state_var(idx_DST_1)
+    aero_state%qdst(3) = camp_state%state_var(idx_DST_3)
+    aero_state%qncl(1) = camp_state%state_var(idx_NCL_1)
+    aero_state%qncl(2) = camp_state%state_var(idx_NCL_2)
+    aero_state%qncl(3) = camp_state%state_var(idx_NCL_3)
+
+    print *, 'Post-solve SO4', camp_state%state_var(idx_SO4_1) + &
+                               camp_state%state_var(idx_SO4_2) + &
+                               camp_state%state_var(idx_SO4_3)
+    print *, 'Post-solve aero_state SO4', aero_state%qso4(1) + &
+                                          aero_state%qso4(2) + &
+                                          aero_state%qso4(3)
+
+  end subroutine mam4_camp_interface_get_camp_aerosol
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 #endif

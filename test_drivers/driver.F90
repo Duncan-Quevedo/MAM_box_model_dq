@@ -24,12 +24,6 @@
 #ifdef MAM4_USE_CAMP
       use mam4_state
       use mam4_camp_interface
-      use camp_camp_core
-      use camp_camp_state
-      use camp_aero_rep_modal_binned_mass
-      use camp_rxn_data
-      use camp_solver_stats
-      use camp_util, only: split_string
 #endif
 
       implicit none
@@ -52,6 +46,8 @@
       integer :: lptr_poma_a_amode(ntot_amode) = -999888777 
 
       integer :: species_class(pcnst) = -1
+
+      integer :: i_so2g, i_h2so4g
 
       contains
 
@@ -94,7 +90,6 @@
 #ifdef MAM4_USE_CAMP
       type(env_state_t) :: env_state_for_camp
       type(aero_state_t) :: aero_state_for_camp
-      type(aero_data_t) :: aero_data_for_camp
 #endif
 
 
@@ -115,14 +110,14 @@
       call cambox_init_run( &
          ncol, nstop, deltat, t, pmid, pdel, zm, pblh, cld, relhum, qv, &
          q, qqcw, dgncur_a, dgncur_awet, qaerwat, wetdens, env_state_for_camp, &
-         aero_state_for_camp, aero_data_for_camp )
+         aero_state_for_camp )
 
       iulog = 93
       write(*,'(/a)') '*** main calling cambox_do_run'
       call cambox_do_run( &
          ncol, nstop, deltat, t, pmid, pdel, zm, pblh, cld, relhum, qv, &
          q, qqcw, dgncur_a, dgncur_awet, qaerwat, wetdens, pbuf2d, &
-         env_state_for_camp, aero_state_for_camp, aero_data_for_camp )
+         env_state_for_camp, aero_state_for_camp )
 
       end subroutine cambox_main
 
@@ -443,7 +438,7 @@
       subroutine cambox_init_run( &
          ncol, nstop, deltat, t, pmid, pdel, zm, pblh, cld, relhum, qv, &
          q, qqcw, dgncur_a, dgncur_awet, qaerwat, wetdens, env_state_for_camp, &
-         aero_state_for_camp, aero_data_for_camp )
+         aero_state_for_camp )
 
       use chem_mods, only: adv_mass, gas_pcnst, imozart
       use physconst, only: pi, epsilo, latvap, latice, &
@@ -509,8 +504,6 @@
 #ifdef MAM4_USE_CAMP
       type(env_state_t) :: env_state_for_camp
       type(aero_state_t) :: aero_state_for_camp
-      type(aero_data_t) :: aero_data_for_camp
-      type(camp_core_t) :: camp_core
 #endif
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -574,56 +567,18 @@
       env_state_for_camp%temp = temp
       env_state_for_camp%press = press
       env_state_for_camp%RH_CLEA = RH_CLEA
-      allocate(env_state_for_camp%adv_mass(size(adv_mass)))
-      env_state_for_camp%adv_mass = adv_mass
-
-      !> Load aerosol state
-      aero_state_for_camp%mfso41 = mfso41
-      aero_state_for_camp%mfpom1 = mfpom1
-      aero_state_for_camp%mfsoa1 = mfsoa1
-      aero_state_for_camp%mfbc1 = mfbc1
-      aero_state_for_camp%mfdst1 = mfdst1
-      aero_state_for_camp%mfncl1 = mfncl1
-      aero_state_for_camp%mfso42 = mfso42
-      aero_state_for_camp%mfsoa2 = mfsoa2
-      aero_state_for_camp%mfncl2 = mfncl2
-      aero_state_for_camp%mfdst3 = mfdst3
-      aero_state_for_camp%mfncl3 = mfncl3
-      aero_state_for_camp%mfso43 = mfso43
-      aero_state_for_camp%mfbc3 = mfbc3
-      aero_state_for_camp%mfpom3 = mfpom3
-      aero_state_for_camp%mfsoa3 = mfsoa3
-      aero_state_for_camp%mfpom4 = mfpom4
-      aero_state_for_camp%mfbc4 = mfbc4
-
-      !> Load aerosol data
-      aero_data_for_camp%numc1 = numc1
-      aero_data_for_camp%numc2 = numc2
-      aero_data_for_camp%numc3 = numc3
-      aero_data_for_camp%numc4 = numc4
-      aero_data_for_camp%dgn(:) = dgnum_amode
-      aero_data_for_camp%sg(:) = sigmag_amode
 
 #endif
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 ! JS - 06-03-2019: do not consider cloud chem at this moment !
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-#ifdef MAM4_USE_CAMP
-      mdo_gaschem    = 0
-      mdo_cloudchem  = 0
-      mdo_gasaerexch = 0
-      mdo_rename     = 1
-      mdo_newnuc     = 1
-      mdo_coag       = 1
-#else
 !      mdo_gaschem    = 1
       mdo_cloudchem  = 0
 !      mdo_gasaerexch = 1
 !      mdo_rename     = 1
 !      mdo_newnuc     = 1
 !      mdo_coag       = 1
-#endif
 
       gaexch_h2so4_uptake_optaa =  2  ! 1=sequential prod then loss,  2=prod+loss together
       newnuc_h2so4_conc_optaa   =  2  ! controls treatment of h2so4 concentrationin mam_newnuc_1subcol
@@ -683,6 +638,11 @@
       call cnst_get_ind( 'HCL',   l_hclg,   .false. )
       call cnst_get_ind( 'H2SO4', l_h2so4g, .false. )
       loffset = imozart-1
+#ifdef MAM4_USE_CAMP
+      idx_so2g = l_so2g - loffset
+      idx_h2so4g = l_h2so4g - loffset
+      to_kgperm3 = aircon(1,1) * mwdry
+#endif
 
 ! initialize the aerosol/number mixing ratio
       do k = 1, pver
@@ -761,6 +721,8 @@
                             (tmpfmom / dens_aer(iaer_mom))   )
                 tmpmass = tmpvol*tmpdens   ! kg-dry-aerosol/kg-air
 
+                !print *, 'soa', dens_aer(iaer_soa), '\so4', dens_aer(iaer_so4), 'bc', dens_aer(iaer_bc), 'pom', dens_aer(iaer_pom), 'ncl' , dens_aer(iaer_ncl), 'dst', dens_aer(iaer_dst)
+
                 l_so4a = lptr_so4_a_amode(n)
                 l_nh4a = -1
                 l_soaa = lptr_soa_a_amode(n)
@@ -815,7 +777,7 @@
       subroutine cambox_do_run( &
          ncol, nstop, deltat, t, pmid, pdel, zm, pblh, cld, relhum, qv, &
          q, qqcw, dgncur_a, dgncur_awet, qaerwat, wetdens, pbuf2d, &
-         env_state_for_camp, aero_state_for_camp, aero_data_for_camp )
+         env_state_for_camp, aero_state_for_camp )
 
       use chem_mods, only: adv_mass, gas_pcnst, imozart
       use physconst, only: mwdry
@@ -874,7 +836,7 @@
       integer :: lmz_num_a2, lmz_nh4_a2, lmz_so4_a2
       integer :: lchnk, loffset, lun
       integer :: latndx(pcols), lonndx(pcols)
-      integer :: n, nacc, nait, nstep
+      integer :: n, nacc, nait, nstep, naermode
 
       logical :: aero_mmr_flag
       logical :: h2o_mmr_flag
@@ -960,9 +922,6 @@
       type(env_state_t) :: env_state_for_camp
       type(gas_state_t) :: gas_state_for_camp
       type(aero_state_t) :: aero_state_for_camp
-      type(aero_data_t) :: aero_data_for_camp
-      type(camp_state_t) :: camp_state
-      type(camp_core_t) :: camp_core
 #endif
 
 !
@@ -1264,11 +1223,7 @@ main_time_loop: &
       lun = 6
       write(lun,'(/a,i8)') 'cambox_do_run doing wateruptake, istep=', istep
       loffset = 0
-#ifdef MAM4_USE_CAMP
-      iwaterup_flag = 0
-#else
       iwaterup_flag = 1
-#endif
       aero_mmr_flag = .true.
       h2o_mmr_flag = .true.
 
@@ -1323,30 +1278,44 @@ main_time_loop: &
       tau_gaschem_simple = 3.0e5  ! so2 gas-rxn timescale (s)
 
       if (mdo_gaschem > 0) then
-         call gaschem_simple_sub(                       &
-            lchnk,    ncol,     nstep,               &
-            loffset,  deltat,                        &
-            vmr,                tau_gaschem_simple      )
-      else
 #ifdef MAM4_USE_CAMP
 !
 ! CAMP chem
 !
+      do naermode = 1, ntot_amode
+        !> Load aerosol state [kg m-3]
+        if (lptr_so4_a_amode(naermode) > 0) aero_state_for_camp%qso4(naermode) = q(1,1,lptr_so4_a_amode(naermode)) * to_kgperm3
+        if (lptr_pom_a_amode(naermode) > 0) aero_state_for_camp%qpom(naermode) = q(1,1,lptr_pom_a_amode(naermode)) * to_kgperm3
+        if (lptr_soa_a_amode(naermode) > 0) aero_state_for_camp%qsoa(naermode) = q(1,1,lptr_soa_a_amode(naermode)) * to_kgperm3
+        if (lptr_bc_a_amode(naermode) > 0) aero_state_for_camp%qbc(naermode) = q(1,1,lptr_bc_a_amode(naermode)) * to_kgperm3
+        if (lptr_dust_a_amode(naermode) > 0) aero_state_for_camp%qdst(naermode) = q(1,1,lptr_dust_a_amode(naermode)) * to_kgperm3
+        if (lptr_nacl_a_amode(naermode) > 0) aero_state_for_camp%qncl(naermode) = q(1,1,lptr_nacl_a_amode(naermode)) * to_kgperm3
+        aero_state_for_camp%GMD(naermode) = dgnum_amode(naermode)
+        aero_state_for_camp%GSD(naermode) = sigmag_amode(naermode)
+      end do
 
       !> Load gas state
-      allocate(gas_state_for_camp%vmr(5))
-      gas_state_for_camp%vmr = vmr(1,1,1:5)
+      allocate(gas_state_for_camp%vmr(gas_pcnst))
+      gas_state_for_camp%vmr = 1.0e+6_r8 * vmr(1,1,:)
 
-      call mam4_camp_interface_solve(camp_core, camp_state, env_state_for_camp, &
-                                     aero_data_for_camp, aero_state_for_camp, &
+      call mam4_camp_interface_solve(env_state_for_camp, &
+                                     aero_state_for_camp, &
                                      gas_state_for_camp, deltat)
 
-      vmr(1,1,1:5) = gas_state_for_camp%vmr
+      vmr(1,1,:) = 1.0e-6_r8 * gas_state_for_camp%vmr
+      deallocate(gas_state_for_camp%vmr)
                                      
 #else
+
+         call gaschem_simple_sub(                       &
+            lchnk,    ncol,     nstep,               &
+            loffset,  deltat,                        &
+            vmr,                tau_gaschem_simple      )
+    
+#endif
+      else
          ! assumed constant gas chemistry production rate (mol/mol)
          vmr(1:ncol,:,lmz_h2so4g) = vmr(1:ncol,:,lmz_h2so4g) + 1.e-16_r8*deltat
-#endif
       end if
 
       h2so4_aft_gaschem(1:ncol,:) = vmr(1:ncol,:,lmz_h2so4g)
@@ -1424,6 +1393,27 @@ main_time_loop: &
          q(    1:ncol,1:pver,l)  = mmr(  1:ncol,1:pver,l2)
          qqcw( 1:ncol,1:pver,l)  = mmrcw(1:ncol,1:pver,l2)
       end do
+
+#ifdef MAM4_USE_CAMP
+      do naermode = 1, ntot_amode
+          !> Load aerosol state [kg kg-1]
+          if (lptr_so4_a_amode(naermode) > 0) q(1,1,lptr_so4_a_amode(naermode)) = &
+              aero_state_for_camp%qso4(naermode) / to_kgperm3
+          if (lptr_pom_a_amode(naermode) > 0) q(1,1,lptr_pom_a_amode(naermode)) = &
+              aero_state_for_camp%qpom(naermode) / to_kgperm3
+          if (lptr_soa_a_amode(naermode) > 0) q(1,1,lptr_soa_a_amode(naermode)) = &
+              aero_state_for_camp%qsoa(naermode) / to_kgperm3
+          if (lptr_bc_a_amode(naermode) > 0) q(1,1,lptr_bc_a_amode(naermode)) = &
+              aero_state_for_camp%qbc(naermode) / to_kgperm3
+          if (lptr_dust_a_amode(naermode) > 0) q(1,1,lptr_dust_a_amode(naermode)) = &
+              aero_state_for_camp%qdst(naermode) / to_kgperm3
+          if (lptr_nacl_a_amode(naermode) > 0) q(1,1,lptr_nacl_a_amode(naermode)) = &
+              aero_state_for_camp%qncl(naermode) / to_kgperm3
+       end do
+       print *, 'driver SO4', q(1,1,lptr_so4_a_amode(1)) + &
+                              q(1,1,lptr_so4_a_amode(2)) + &
+                              q(1,1,lptr_so4_a_amode(3))
+#endif
 
 !
 ! store the data of each time step for netcdf output
