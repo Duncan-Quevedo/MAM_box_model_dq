@@ -16,6 +16,9 @@ module mam4_camp_interface
   use camp_util
   use json_module
   use camp_solver_stats
+  use camp_mechanism_data
+  use camp_rxn_data
+  use camp_rxn_emission
 #endif
 
   implicit none
@@ -51,6 +54,10 @@ contains
     type(aero_rep_update_data_modal_binned_mass_GMD_t) :: update_data_GMD
     type(aero_rep_update_data_modal_binned_mass_GSD_t) :: update_data_GSD
 
+    type(mechanism_data_t), pointer :: mechanism
+    type(rxn_update_data_emission_t) :: rate_update
+    class(rxn_data_t), pointer :: rxn
+
     type(solver_stats_t), target :: solver_stats
 
     camp_core => camp_core_t("/home/dquevedo/AMBRS/ambrs_with_mam4-camp_support/tests/config.json")
@@ -58,6 +65,14 @@ contains
 
     !call camp_core%solver_initialize()
     !camp_state => camp_core%new_state()
+
+    call assert(260845179, camp_core%get_mechanism("H2SO4 condensation", mechanism))
+    rxn => mechanism%get_rxn(2)
+    select type (rxn_emis => rxn)
+      class is (rxn_emission_t)
+        call camp_core%initialize_update_object(rxn_emis, &
+                                                rate_update)
+    end select
 
     call assert(209301925, camp_core%get_aero_rep(aero_rep_key, aero_rep_ptr))
     select type (aero_rep_ptr)
@@ -78,6 +93,8 @@ contains
                 call camp_core%update_data(update_data_GMD)
                 call camp_core%update_data(update_data_GSD)
             end do
+            call rate_update%set_rate(1.0e-1_r8)
+            call camp_core%update_data(rate_update)
         class default
             write(*,*) "wrong aerosol rep"
             stop 3
