@@ -114,10 +114,16 @@
 
       iulog = 93
       write(*,'(/a)') '*** main calling cambox_do_run'
+#ifdef MAM4_USE_CAMP
       call cambox_do_run( &
          ncol, nstop, deltat, t, pmid, pdel, zm, pblh, cld, relhum, qv, &
          q, qqcw, dgncur_a, dgncur_awet, qaerwat, wetdens, pbuf2d, &
          env_state_for_camp, aero_state_for_camp )
+#else
+      call cambox_do_run( &
+         ncol, nstop, deltat, t, pmid, pdel, zm, pblh, cld, relhum, qv, &
+         q, qqcw, dgncur_a, dgncur_awet, qaerwat, wetdens, pbuf2d )
+#endif
 
       end subroutine cambox_main
 
@@ -435,10 +441,16 @@
 
 
 !-------------------------------------------------------------------------------
+#ifdef MAM4_USE_CAMP
       subroutine cambox_init_run( &
          ncol, nstop, deltat, t, pmid, pdel, zm, pblh, cld, relhum, qv, &
          q, qqcw, dgncur_a, dgncur_awet, qaerwat, wetdens, env_state_for_camp, &
          aero_state_for_camp )
+#else
+      subroutine cambox_init_run( &
+         ncol, nstop, deltat, t, pmid, pdel, zm, pblh, cld, relhum, qv, &
+         q, qqcw, dgncur_a, dgncur_awet, qaerwat, wetdens )
+#endif
 
       use chem_mods, only: adv_mass, gas_pcnst, imozart
       use physconst, only: pi, epsilo, latvap, latice, &
@@ -774,10 +786,16 @@
 
 
 !-------------------------------------------------------------------------------
+#ifdef MAM4_USE_CAMP
       subroutine cambox_do_run( &
          ncol, nstop, deltat, t, pmid, pdel, zm, pblh, cld, relhum, qv, &
          q, qqcw, dgncur_a, dgncur_awet, qaerwat, wetdens, pbuf2d, &
          env_state_for_camp, aero_state_for_camp )
+#else
+      subroutine cambox_do_run( &
+         ncol, nstop, deltat, t, pmid, pdel, zm, pblh, cld, relhum, qv, &
+         q, qqcw, dgncur_a, dgncur_awet, qaerwat, wetdens, pbuf2d )
+#endif
 
       use chem_mods, only: adv_mass, gas_pcnst, imozart
       use physconst, only: mwdry
