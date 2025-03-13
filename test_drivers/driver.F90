@@ -488,6 +488,9 @@
       integer :: k
       integer :: l, ll, loffset, lun
       integer :: l_nh3g, l_so2g, l_soag, l_hno3g, l_hclg, l_h2so4g
+#ifdef MAM4_USE_CAMP
+      integer :: l_h2o2g, l_dmsg
+#endif
       integer :: l_num_a1, l_num_a2, l_nh4_a1, l_nh4_a2, &
                  l_so4_a1, l_so4_a2, l_soa_a1, l_soa_a2
       integer :: l_numa, l_so4a, l_nh4a, l_soaa, l_poma, l_bcxa, l_ncla, &
@@ -516,6 +519,7 @@
 #ifdef MAM4_USE_CAMP
       type(env_state_t) :: env_state_for_camp
       type(aero_state_t) :: aero_state_for_camp
+      integer :: i_ic
 #endif
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -524,14 +528,23 @@
 !
 ! namelist variable
 !
+#ifdef MAM4_USE_CAMP
+      integer  :: mam_nstep
+      real(r8) :: mam_dt
+#else
       integer  :: mam_dt, mam_nstep
+#endif
       real(r8) :: temp, press, RH_CLEA
       real(r8) :: numc1, numc2, numc3, numc4,                     &
                   mfso41, mfpom1, mfsoa1, mfbc1, mfdst1, mfncl1,  &
                   mfso42, mfsoa2, mfncl2,                         &
                   mfdst3, mfncl3, mfso43, mfbc3, mfpom3,  mfsoa3, &
                   mfpom4, mfbc4,                                  &
+#ifdef MAM4_USE_CAMP
+                  qso2, qh2so4, qsoag !, qh2o2, qdms
+#else
                   qso2, qh2so4, qsoag
+#endif
 
       namelist /time_input/ mam_dt, mam_nstep
       namelist /cntl_input/ mdo_gaschem, mdo_gasaerexch, &
@@ -542,7 +555,11 @@
                   mfso42, mfsoa2, mfncl2, &
                   mfdst3, mfncl3, mfso43, mfbc3, mfpom3, mfsoa3, &
                   mfpom4, mfbc4, &
+#ifdef MAM4_USE_CAMP
+                  qso2, qh2so4, qsoag !, qh2o2, qdms
+#else
                   qso2, qh2so4, qsoag
+#endif
 
       open (UNIT = 101, FILE = 'namelist', STATUS = 'OLD')
           read (101, time_input)
@@ -651,9 +668,15 @@
       call cnst_get_ind( 'H2SO4', l_h2so4g, .false. )
       loffset = imozart-1
 #ifdef MAM4_USE_CAMP
-      idx_so2g = l_so2g - loffset
-      idx_h2so4g = l_h2so4g - loffset
+      !call cnst_get_ind( 'DMS',   l_dmsg,   .false. )
+      !call cnst_get_ind( 'H2O2',  l_h2o2g,  .false. )
+      mam_idx_so2g = l_so2g - loffset
+      mam_idx_h2so4g = l_h2so4g - loffset
+      !idx_h2o2g = l_h2o2g - loffset
+      !idx_dmsg = l_dmsg - loffset
+      mam_idx_soag = l_soag - loffset
       to_kgperm3 = aircon(1,1) * mwdry
+      aero_state_for_camp%numc = (/ numc1, numc2, numc3, numc4 /)
 #endif
 
 ! initialize the aerosol/number mixing ratio
@@ -778,6 +801,12 @@
       q(:,:,l_so2g)   = qso2
       q(:,:,l_soag)   = qsoag
       q(:,:,l_h2so4g) = qh2so4
+#ifdef MAM4_USE_CAMP
+      !q(:,:,l_h2o2g)  = qh2o2
+      !q(:,:,l_dmsg)   = qdms
+      ! Initialize persistent state
+      first_step = .true.
+#endif
 
       write(*,'(/a)') 'cambox_init_run all done'
 
@@ -914,12 +943,12 @@
       integer :: error
       integer :: dimids(2), varid(23)
       character (8) :: date
-      real(r8), dimension(nstop,ntot_amode) :: tmp_dgn_a, &
+      real(r8), dimension(0:nstop,ntot_amode) :: tmp_dgn_a, &
                                tmp_dgn_awet, tmp_num_aer, &
                                tmp_so4_aer, tmp_soa_aer
-      real(r8), dimension(nstop)            :: tmp_h2so4, &
+      real(r8), dimension(0:nstop)            :: tmp_h2so4, &
                                                tmp_soag
-      real(r8), dimension(nstop,ntot_amode) :: qtend_cond_aging_so4, &
+      real(r8), dimension(0:nstop,ntot_amode) :: qtend_cond_aging_so4, &
                                                qtend_cond_aging_soa, &
                                                qtend_rename_so4, &
                                                qtend_rename_soa, &
@@ -927,7 +956,7 @@
                                                qtend_newnuc_soa, &
                                                qtend_coag_so4, &
                                                qtend_coag_soa
-      real(r8), dimension(nstop)            :: qtend_cond_aging_h2so4, &
+      real(r8), dimension(0:nstop)            :: qtend_cond_aging_h2so4, &
                                                qtend_cond_aging_soag,  &
                                                qtend_rename_h2so4,     &
                                                qtend_rename_soag,      &
@@ -950,7 +979,7 @@
       call check( nf90_create(FILE_NAME, NF90_CLOBBER, ncid) )
 
       ! Define the dimensions. NetCDF will hand back an ID for each. 
-      call check( nf90_def_dim(ncid, "nsteps", nstop, nstep_dimid) )
+      call check( nf90_def_dim(ncid, "nsteps", nstop+1, nstep_dimid) )
       call check( nf90_def_dim(ncid, "mode", ntot_amode, mode_dimid) )
 
       ! The dimids array is used to pass the IDs of the dimensions of
@@ -1132,6 +1161,57 @@
       write(*,'( a,3i5)') 'l_num_a1, l_so4_a1, l_nh4_a1', l_num_a1, l_so4_a1, max(l_nh4_a1,-999)
       write(*,'( a,3i5)') 'l_num_a2, l_so4_a2, l_nh4_a2', l_num_a2, l_so4_a2, max(l_nh4_a2,-999)
 
+      !do i = 1, ntot_amode
+      !    if ( lptr_so4_a_amode(i) .gt. 0 ) write(*,*) 'qSO4 ', q(1,1,lptr_so4_a_amode(i))
+      !end do
+!
+! store the initial data for netcdf output
+!
+      nstep = 0
+      tmp_dgn_a(nstep,1:ntot_amode)        = dgncur_a(1,1,1:ntot_amode)
+      tmp_dgn_awet(nstep,1:ntot_amode)     = dgncur_awet(1,1,1:ntot_amode)
+      do i = 1, ntot_amode
+         tmp_num_aer(nstep,i)              = q(1,1,numptr_amode(i))
+         l                                 = lptr_so4_a_amode(i)
+         if  (l .gt. 0) then 
+             tmp_so4_aer(nstep,i)          = q(1,1,l)
+             l2                            = l - loffset
+             qtend_cond_aging_so4(nstep,i) = dvmrdt_cond(1,1,l2)
+             qtend_rename_so4(nstep,i)     = dvmrdt_rnam(1,1,l2)
+             qtend_newnuc_so4(nstep,i)     = dvmrdt_nnuc(1,1,l2)
+             qtend_coag_so4(nstep,i)       = dvmrdt_coag(1,1,l2)
+         end if
+         l                                 = lptr_soa_a_amode(i)
+         if  (l .gt. 0) then 
+             tmp_soa_aer(nstep,i)          = q(1,1,l)
+             l2                            = l - loffset
+             qtend_cond_aging_soa(nstep,i) = dvmrdt_cond(1,1,l2)
+             qtend_rename_soa(nstep,i)     = dvmrdt_rnam(1,1,l2)
+             qtend_newnuc_soa(nstep,i)     = dvmrdt_nnuc(1,1,l2)
+             qtend_coag_soa(nstep,i)       = dvmrdt_coag(1,1,l2)
+         end if
+      end do
+      tmp_h2so4(nstep)                     = q(1,1,l_h2so4g)
+      l2                                   = l_h2so4g - loffset
+      qtend_cond_aging_h2so4(nstep)        = dvmrdt_cond(1,1,l2)
+      qtend_rename_h2so4(nstep)            = dvmrdt_rnam(1,1,l2)
+      qtend_newnuc_h2so4(nstep)            = dvmrdt_nnuc(1,1,l2)
+      qtend_coag_h2so4(nstep)              = dvmrdt_coag(1,1,l2)
+
+      tmp_soag(nstep)                      = q(1,1,l_soag)
+      l2                                   = l_soag - loffset
+      qtend_cond_aging_soag(nstep)         = dvmrdt_cond(1,1,l2)
+      qtend_rename_soag(nstep)             = dvmrdt_rnam(1,1,l2)
+      qtend_newnuc_soag(nstep)             = dvmrdt_nnuc(1,1,l2)
+      qtend_coag_soag(nstep)               = dvmrdt_coag(1,1,l2)
+
+!> Initialize aero_state for camp
+      aero_state_for_camp%qso4 = 0.0_r8
+      aero_state_for_camp%qpom = 0.0_r8
+      aero_state_for_camp%qsoa = 0.0_r8
+      aero_state_for_camp%qbc = 0.0_r8
+      aero_state_for_camp%qdst = 0.0_r8
+      aero_state_for_camp%qncl = 0.0_r8
 
 main_time_loop: &
       do nstep = 1, nstop
@@ -1299,7 +1379,12 @@ main_time_loop: &
 #ifdef MAM4_USE_CAMP
 !
 ! CAMP chem
-!
+!    
+
+      !do i = 1, ntot_amode
+      !    if ( lptr_so4_a_amode(i) .gt. 0 ) write(*,*) 'qSO4 ', q(1,1,lptr_so4_a_amode(i))
+      !end do
+
       do naermode = 1, ntot_amode
         !> Load aerosol state [kg m-3]
         if (lptr_so4_a_amode(naermode) > 0) aero_state_for_camp%qso4(naermode) = q(1,1,lptr_so4_a_amode(naermode)) * to_kgperm3
@@ -1308,6 +1393,7 @@ main_time_loop: &
         if (lptr_bc_a_amode(naermode) > 0) aero_state_for_camp%qbc(naermode) = q(1,1,lptr_bc_a_amode(naermode)) * to_kgperm3
         if (lptr_dust_a_amode(naermode) > 0) aero_state_for_camp%qdst(naermode) = q(1,1,lptr_dust_a_amode(naermode)) * to_kgperm3
         if (lptr_nacl_a_amode(naermode) > 0) aero_state_for_camp%qncl(naermode) = q(1,1,lptr_nacl_a_amode(naermode)) * to_kgperm3
+        aero_state_for_camp%qaerwat(naermode) = qaerwat(1,1,naermode) * to_kgperm3
         aero_state_for_camp%GMD(naermode) = dgnum_amode(naermode)
         aero_state_for_camp%GSD(naermode) = sigmag_amode(naermode)
       end do
@@ -1315,13 +1401,31 @@ main_time_loop: &
       !> Load gas state
       allocate(gas_state_for_camp%vmr(gas_pcnst))
       gas_state_for_camp%vmr = 1.0e+6_r8 * vmr(1,1,:)
-
+      
       call mam4_camp_interface_solve(env_state_for_camp, &
                                      aero_state_for_camp, &
                                      gas_state_for_camp, deltat)
 
       vmr(1,1,:) = 1.0e-6_r8 * gas_state_for_camp%vmr
       deallocate(gas_state_for_camp%vmr)
+
+      do naermode = 1, ntot_amode
+          !> Load aerosol state [m3 m-3]?
+          if (lptr_so4_a_amode(naermode) > 0) vmr(1,1,lptr_so4_a_amode(naermode)-loffset) = &
+              aero_state_for_camp%qso4(naermode) / to_kgperm3 * mwdry / adv_mass(lptr_so4_a_amode(naermode)-loffset)
+          if (lptr_pom_a_amode(naermode) > 0) vmr(1,1,lptr_pom_a_amode(naermode)-loffset) = &
+              aero_state_for_camp%qpom(naermode) / to_kgperm3 * mwdry / adv_mass(lptr_pom_a_amode(naermode)-loffset)
+          if (lptr_soa_a_amode(naermode) > 0) vmr(1,1,lptr_soa_a_amode(naermode)-loffset) = &
+              aero_state_for_camp%qsoa(naermode) / to_kgperm3 * mwdry / adv_mass(lptr_soa_a_amode(naermode)-loffset)
+          if (lptr_bc_a_amode(naermode) > 0) vmr(1,1,lptr_bc_a_amode(naermode)-loffset) = &
+              aero_state_for_camp%qbc(naermode) / to_kgperm3 * mwdry / adv_mass(lptr_bc_a_amode(naermode)-loffset)
+          if (lptr_dust_a_amode(naermode) > 0) vmr(1,1,lptr_dust_a_amode(naermode)-loffset) = &
+              aero_state_for_camp%qdst(naermode) / to_kgperm3 * mwdry / adv_mass(lptr_dust_a_amode(naermode)-loffset)
+          if (lptr_nacl_a_amode(naermode) > 0) vmr(1,1,lptr_nacl_a_amode(naermode)-loffset) = &
+              aero_state_for_camp%qncl(naermode) / to_kgperm3 * mwdry / adv_mass(lptr_nacl_a_amode(naermode)-loffset)
+       end do
+
+       !write(*,*), 'H2SO4, SO4 ', vmr(1,1,mam_idx_h2so4g), vmr(1,1,lptr_so4_a_amode(1)-loffset)+vmr(1,1,lptr_so4_a_amode(2)-loffset)+vmr(1,1,lptr_so4_a_amode(3)-loffset)
                                      
 #else
 
@@ -1329,11 +1433,11 @@ main_time_loop: &
             lchnk,    ncol,     nstep,               &
             loffset,  deltat,                        &
             vmr,                tau_gaschem_simple      )
-    
 #endif
+
       else
          ! assumed constant gas chemistry production rate (mol/mol)
-         vmr(1:ncol,:,lmz_h2so4g) = vmr(1:ncol,:,lmz_h2so4g) + 1.e-16_r8*deltat
+         !vmr(1:ncol,:,lmz_h2so4g) = vmr(1:ncol,:,lmz_h2so4g) + 1.e-16_r8*deltat
       end if
 
       h2so4_aft_gaschem(1:ncol,:) = vmr(1:ncol,:,lmz_h2so4g)
@@ -1412,27 +1516,6 @@ main_time_loop: &
          qqcw( 1:ncol,1:pver,l)  = mmrcw(1:ncol,1:pver,l2)
       end do
 
-#ifdef MAM4_USE_CAMP
-      do naermode = 1, ntot_amode
-          !> Load aerosol state [kg kg-1]
-          if (lptr_so4_a_amode(naermode) > 0) q(1,1,lptr_so4_a_amode(naermode)) = &
-              aero_state_for_camp%qso4(naermode) / to_kgperm3
-          if (lptr_pom_a_amode(naermode) > 0) q(1,1,lptr_pom_a_amode(naermode)) = &
-              aero_state_for_camp%qpom(naermode) / to_kgperm3
-          if (lptr_soa_a_amode(naermode) > 0) q(1,1,lptr_soa_a_amode(naermode)) = &
-              aero_state_for_camp%qsoa(naermode) / to_kgperm3
-          if (lptr_bc_a_amode(naermode) > 0) q(1,1,lptr_bc_a_amode(naermode)) = &
-              aero_state_for_camp%qbc(naermode) / to_kgperm3
-          if (lptr_dust_a_amode(naermode) > 0) q(1,1,lptr_dust_a_amode(naermode)) = &
-              aero_state_for_camp%qdst(naermode) / to_kgperm3
-          if (lptr_nacl_a_amode(naermode) > 0) q(1,1,lptr_nacl_a_amode(naermode)) = &
-              aero_state_for_camp%qncl(naermode) / to_kgperm3
-       end do
-       print *, 'driver SO4', q(1,1,lptr_so4_a_amode(1)) + &
-                              q(1,1,lptr_so4_a_amode(2)) + &
-                              q(1,1,lptr_so4_a_amode(3))
-#endif
-
 !
 ! store the data of each time step for netcdf output
 !
@@ -1479,51 +1562,51 @@ main_time_loop: &
 ! Write the data to the file.
 !
       call check( nf90_put_var(ncid, varid(1), &
-                  tmp_num_aer(1:nstop,1:ntot_amode)) )
+                  tmp_num_aer(0:nstop,1:ntot_amode)) )
       call check( nf90_put_var(ncid, varid(2), &
-                  tmp_so4_aer(1:nstop,1:ntot_amode)) )
+                  tmp_so4_aer(0:nstop,1:ntot_amode)) )
       call check( nf90_put_var(ncid, varid(3), &
-                  tmp_soa_aer(1:nstop,1:ntot_amode)) )
+                  tmp_soa_aer(0:nstop,1:ntot_amode)) )
       call check( nf90_put_var(ncid, varid(4), &
-                  tmp_h2so4(1:nstop)) )
+                  tmp_h2so4(0:nstop)) )
       call check( nf90_put_var(ncid, varid(5), &
-                  tmp_soag(1:nstop))  )
+                  tmp_soag(0:nstop))  )
       call check( nf90_put_var(ncid, varid(6), &
-                  tmp_dgn_a(1:nstop,1:ntot_amode)) )
+                  tmp_dgn_a(0:nstop,1:ntot_amode)) )
       call check( nf90_put_var(ncid, varid(7), &
-                  tmp_dgn_awet(1:nstop,1:ntot_amode)) )
+                  tmp_dgn_awet(0:nstop,1:ntot_amode)) )
       call check( nf90_put_var(ncid, varid(8), &
-                  qtend_cond_aging_so4(1:nstop,1:ntot_amode)) )
+                  qtend_cond_aging_so4(0:nstop,1:ntot_amode)) )
       call check( nf90_put_var(ncid, varid(9), &
-                  qtend_rename_so4(1:nstop,1:ntot_amode)) )
+                  qtend_rename_so4(0:nstop,1:ntot_amode)) )
       call check( nf90_put_var(ncid, varid(10), &
-                  qtend_newnuc_so4(1:nstop,1:ntot_amode)) )
+                  qtend_newnuc_so4(0:nstop,1:ntot_amode)) )
       call check( nf90_put_var(ncid, varid(11), &
-                  qtend_coag_so4(1:nstop,1:ntot_amode)) )
+                  qtend_coag_so4(0:nstop,1:ntot_amode)) )
       call check( nf90_put_var(ncid, varid(12), &
-                  qtend_cond_aging_soa(1:nstop,1:ntot_amode)) )
+                  qtend_cond_aging_soa(0:nstop,1:ntot_amode)) )
       call check( nf90_put_var(ncid, varid(13), &
-                  qtend_rename_soa(1:nstop,1:ntot_amode)) )
+                  qtend_rename_soa(0:nstop,1:ntot_amode)) )
       call check( nf90_put_var(ncid, varid(14), &
-                  qtend_newnuc_soa(1:nstop,1:ntot_amode)) )
+                  qtend_newnuc_soa(0:nstop,1:ntot_amode)) )
       call check( nf90_put_var(ncid, varid(15), &
-                  qtend_coag_soa(1:nstop,1:ntot_amode)) )
+                  qtend_coag_soa(0:nstop,1:ntot_amode)) )
       call check( nf90_put_var(ncid, varid(16), &
-                  qtend_cond_aging_h2so4(1:nstop)) )
+                  qtend_cond_aging_h2so4(0:nstop)) )
       call check( nf90_put_var(ncid, varid(17), &
-                  qtend_rename_h2so4(1:nstop)) )
+                  qtend_rename_h2so4(0:nstop)) )
       call check( nf90_put_var(ncid, varid(18), &
-                  qtend_newnuc_h2so4(1:nstop)) )
+                  qtend_newnuc_h2so4(0:nstop)) )
       call check( nf90_put_var(ncid, varid(19), &
-                  qtend_coag_h2so4(1:nstop)) )
+                  qtend_coag_h2so4(0:nstop)) )
       call check( nf90_put_var(ncid, varid(20), &
-                  qtend_cond_aging_soag(1:nstop)) )
+                  qtend_cond_aging_soag(0:nstop)) )
       call check( nf90_put_var(ncid, varid(21), &
-                  qtend_rename_soag(1:nstop)) )
+                  qtend_rename_soag(0:nstop)) )
       call check( nf90_put_var(ncid, varid(22), &
-                  qtend_newnuc_soag(1:nstop)) )
+                  qtend_newnuc_soag(0:nstop)) )
       call check( nf90_put_var(ncid, varid(23), &
-                  qtend_coag_soag(1:nstop)) )
+                  qtend_coag_soag(0:nstop)) )
 
       ! Close the file. This frees up any internal netCDF resources
       ! associated with the file, and flushes any buffers.
