@@ -47,8 +47,6 @@
 
       integer :: species_class(pcnst) = -1
 
-      integer :: i_so2g, i_h2so4g
-
       contains
 
 !-------------------------------------------------------------------------------
@@ -488,9 +486,6 @@
       integer :: k
       integer :: l, ll, loffset, lun
       integer :: l_nh3g, l_so2g, l_soag, l_hno3g, l_hclg, l_h2so4g
-#ifdef MAM4_USE_CAMP
-      integer :: l_h2o2g, l_dmsg
-#endif
       integer :: l_num_a1, l_num_a2, l_nh4_a1, l_nh4_a2, &
                  l_so4_a1, l_so4_a2, l_soa_a1, l_soa_a2
       integer :: l_numa, l_so4a, l_nh4a, l_soaa, l_poma, l_bcxa, l_ncla, &
@@ -519,7 +514,6 @@
 #ifdef MAM4_USE_CAMP
       type(env_state_t) :: env_state_for_camp
       type(aero_state_t) :: aero_state_for_camp
-      integer :: i_ic
 #endif
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -540,11 +534,7 @@
                   mfso42, mfsoa2, mfncl2,                         &
                   mfdst3, mfncl3, mfso43, mfbc3, mfpom3,  mfsoa3, &
                   mfpom4, mfbc4,                                  &
-#ifdef MAM4_USE_CAMP
-                  qso2, qh2so4, qsoag !, qh2o2, qdms
-#else
                   qso2, qh2so4, qsoag
-#endif
 
       namelist /time_input/ mam_dt, mam_nstep
       namelist /cntl_input/ mdo_gaschem, mdo_gasaerexch, &
@@ -555,11 +545,7 @@
                   mfso42, mfsoa2, mfncl2, &
                   mfdst3, mfncl3, mfso43, mfbc3, mfpom3, mfsoa3, &
                   mfpom4, mfbc4, &
-#ifdef MAM4_USE_CAMP
-                  qso2, qh2so4, qsoag !, qh2o2, qdms
-#else
                   qso2, qh2so4, qsoag
-#endif
 
       open (UNIT = 101, FILE = 'namelist', STATUS = 'OLD')
           read (101, time_input)
@@ -668,12 +654,8 @@
       call cnst_get_ind( 'H2SO4', l_h2so4g, .false. )
       loffset = imozart-1
 #ifdef MAM4_USE_CAMP
-      !call cnst_get_ind( 'DMS',   l_dmsg,   .false. )
-      !call cnst_get_ind( 'H2O2',  l_h2o2g,  .false. )
       mam_idx_so2g = l_so2g - loffset
       mam_idx_h2so4g = l_h2so4g - loffset
-      !idx_h2o2g = l_h2o2g - loffset
-      !idx_dmsg = l_dmsg - loffset
       mam_idx_soag = l_soag - loffset
       to_kgperm3 = aircon(1,1) * mwdry
       aero_state_for_camp%numc = (/ numc1, numc2, numc3, numc4 /)
@@ -802,9 +784,6 @@
       q(:,:,l_soag)   = qsoag
       q(:,:,l_h2so4g) = qh2so4
 #ifdef MAM4_USE_CAMP
-      !q(:,:,l_h2o2g)  = qh2o2
-      !q(:,:,l_dmsg)   = qdms
-      ! Initialize persistent state
       first_step = .true.
 #endif
 
@@ -1205,6 +1184,7 @@
       qtend_newnuc_soag(nstep)             = dvmrdt_nnuc(1,1,l2)
       qtend_coag_soag(nstep)               = dvmrdt_coag(1,1,l2)
 
+#ifdef MAM4_USE_CAMP
 !> Initialize aero_state for camp
       aero_state_for_camp%qso4 = 0.0_r8
       aero_state_for_camp%qpom = 0.0_r8
@@ -1212,6 +1192,7 @@
       aero_state_for_camp%qbc = 0.0_r8
       aero_state_for_camp%qdst = 0.0_r8
       aero_state_for_camp%qncl = 0.0_r8
+#endif
 
 main_time_loop: &
       do nstep = 1, nstop
@@ -1379,12 +1360,7 @@ main_time_loop: &
 #ifdef MAM4_USE_CAMP
 !
 ! CAMP chem
-!    
-
-      !do i = 1, ntot_amode
-      !    if ( lptr_so4_a_amode(i) .gt. 0 ) write(*,*) 'qSO4 ', q(1,1,lptr_so4_a_amode(i))
-      !end do
-
+! 
       do naermode = 1, ntot_amode
         !> Load aerosol state [kg m-3]
         if (lptr_so4_a_amode(naermode) > 0) aero_state_for_camp%qso4(naermode) = q(1,1,lptr_so4_a_amode(naermode)) * to_kgperm3
@@ -1424,8 +1400,6 @@ main_time_loop: &
           if (lptr_nacl_a_amode(naermode) > 0) vmr(1,1,lptr_nacl_a_amode(naermode)-loffset) = &
               aero_state_for_camp%qncl(naermode) / to_kgperm3 * mwdry / adv_mass(lptr_nacl_a_amode(naermode)-loffset)
        end do
-
-       !write(*,*), 'H2SO4, SO4 ', vmr(1,1,mam_idx_h2so4g), vmr(1,1,lptr_so4_a_amode(1)-loffset)+vmr(1,1,lptr_so4_a_amode(2)-loffset)+vmr(1,1,lptr_so4_a_amode(3)-loffset)
                                      
 #else
 
@@ -1437,7 +1411,7 @@ main_time_loop: &
 
       else
          ! assumed constant gas chemistry production rate (mol/mol)
-         !vmr(1:ncol,:,lmz_h2so4g) = vmr(1:ncol,:,lmz_h2so4g) + 1.e-16_r8*deltat
+         vmr(1:ncol,:,lmz_h2so4g) = vmr(1:ncol,:,lmz_h2so4g) + 1.e-16_r8*deltat
       end if
 
       h2so4_aft_gaschem(1:ncol,:) = vmr(1:ncol,:,lmz_h2so4g)
